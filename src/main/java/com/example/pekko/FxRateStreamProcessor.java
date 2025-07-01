@@ -5,9 +5,13 @@ import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.pekko.Done;
 import org.apache.pekko.actor.typed.ActorRef;
 import org.apache.pekko.actor.typed.ActorSystem;
+import org.apache.pekko.japi.Pair;
+import org.apache.pekko.kafka.CommitterSettings;
 import org.apache.pekko.kafka.ConsumerSettings;
 import org.apache.pekko.kafka.Subscriptions;
+import org.apache.pekko.kafka.javadsl.Committer;
 import org.apache.pekko.kafka.javadsl.Consumer;
+import org.apache.pekko.stream.javadsl.Keep;
 import org.apache.pekko.stream.javadsl.Sink;
 import org.apache.pekko.stream.javadsl.Source;
 import io.confluent.kafka.serializers.KafkaAvroDeserializer;
@@ -22,6 +26,7 @@ import java.util.Properties;
 import java.util.concurrent.CompletionStage;
 import java.time.Duration;
 import org.apache.pekko.util.Timeout;
+import reactor.util.function.Tuple2;
 
 public class FxRateStreamProcessor {
     private static final Logger log = LoggerFactory.getLogger(FxRateStreamProcessor.class);
@@ -51,21 +56,22 @@ public class FxRateStreamProcessor {
                 .withGroupId("fx-rate-processor")
                 .withProperty("schema.registry.url", "http://localhost:8081")
                 .withProperty(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest")
-                .withProperty(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "true");
+                .withProperty(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
     }
     
     public CompletionStage<Done> startProcessing() {
         log.info("Starting FxRate stream processing from Kafka topic 'fx-rates'");
-        
-        return Consumer.plainSource(consumerSettings, Subscriptions.topics("fx-rates"))
+        final var committerSettings = CommitterSettings.create(system);
+        return Consumer.committableSource(consumerSettings, Subscriptions.topics("fx-rates"))
                 .map(record -> {
-                    FxRate fxRate = (FxRate) record.value();
+                    FxRate fxRate = (FxRate) record.record().value();
                     log.debug("Received FxRate: {} {} -> {} at rate {}", 
                              fxRate.getId(), fxRate.getFromCurrency(), fxRate.getToCurrency(), fxRate.getRate());
-                    return fxRate;
+                    return Pair.create(fxRate, record.committableOffset());
                 })
-                .mapAsync(10, fxRate -> {
+                .mapAsync(10, pair -> {
                     // Store in ORMultiMap
+                    final var fxRate = pair.first();
                     Duration timeout = Duration.ofSeconds(5);
                     CompletionStage<FxRateStorage.StoreResponse> storeFuture = org.apache.pekko.actor.typed.javadsl.AskPattern.ask(
                             fxRateStorage,
@@ -80,12 +86,12 @@ public class FxRateStreamProcessor {
                     // Combine both operations and return the FxRate
                     return storeFuture.thenCombine(redisFuture, (storeResult, redisResult) -> {
                         log.debug("Stored FxRate in ORMultiMap and Redis: {}", fxRate.getId());
-                        return fxRate;
+                        return pair;
                     }).exceptionally(throwable -> {
                         log.error("Failed to store FxRate: {}", fxRate.getId(), throwable);
-                        return fxRate; // Continue processing even if storage fails
-                    });
-                })
-                .runWith(Sink.ignore(), system);
+                        return pair; // Continue processing even if storage fails
+                    }).thenApply(Pair::second);
+                }).toMat(Committer.sink(committerSettings), Keep.right())
+                .run(system);
     }
 }
