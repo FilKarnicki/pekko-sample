@@ -1,0 +1,40 @@
+{
+  "type": "record",
+  "name": "FxRate",
+  "namespace": "com.example.pekko.model",
+  "doc": "Foreign exchange rate data",
+  "fields": [
+    {
+      "name": "id",
+      "type": "string",
+      "doc": "Unique identifier for the FX rate record"
+    },
+    {
+      "name": "fromCurrency",
+      "type": "string",
+      "doc": "Source currency code (e.g., USD)"
+    },
+    {
+      "name": "toCurrency", 
+      "type": "string",
+      "doc": "Target currency code (e.g., EUR)"
+    },
+    {
+      "name": "rate",
+      "type": "double",
+      "doc": "Exchange rate from source to target currency"
+    },
+    {
+      "name": "timestamp",
+      "type": "long",
+      "logicalType": "timestamp-millis",
+      "doc": "Timestamp when the rate was recorded (milliseconds since epoch)"
+    },
+    {
+      "name": "source",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Source of the exchange rate data"
+    }
+  ]
+}
