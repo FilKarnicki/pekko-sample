@@ -15,6 +15,9 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.List;
+import java.util.stream.Collectors;
+import io.lettuce.core.KeyValue;
 
 public class RedisPublisher {
     private static final Logger log = LoggerFactory.getLogger(RedisPublisher.class);
@@ -97,6 +100,62 @@ public class RedisPublisher {
         }
     }
     
+    /**
+     * Load all stored FxRates from Redis.
+     *
+     * @return completion stage of list of FxRates loaded from Redis storage
+     */
+    public CompletionStage<List<FxRate>> loadAllFxRates() {
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                StatefulRedisConnection<String, String> connection = connectionPool.borrowObject();
+                try {
+                    RedisAsyncCommands<String, String> commands = connection.async();
+                    var keys = commands.keys("fx_rate:*").get();
+                    if (keys.isEmpty()) {
+                        return List.of();
+                    }
+                    var kvs = commands.mget(keys.toArray(new String[0])).get();
+                    return kvs.stream()
+                              .map(kv -> {
+                                  try {
+                                      return parseFxRateJson(kv.getValue());
+                                  } catch (Exception e) {
+                                      log.warn("Failed to parse FxRate JSON: {}", kv.getValue(), e);
+                                      return null;
+                                  }
+                              })
+                              .filter(r -> r != null)
+                              .collect(Collectors.toList());
+                } finally {
+                    connectionPool.returnObject(connection);
+                }
+            } catch (Exception e) {
+                log.error("Failed to load FxRates from Redis", e);
+                throw new RuntimeException("Redis loadAllFxRates failed", e);
+            }
+        });
+    }
+
+    private FxRate parseFxRateJson(String json) throws Exception {
+        ObjectNode node = (ObjectNode) objectMapper.readTree(json);
+        String id = node.get("id").asText();
+        String from = node.get("fromCurrency").asText();
+        String to = node.get("toCurrency").asText();
+        double rate = node.get("rate").asDouble();
+        long timestamp = node.get("timestamp").asLong();
+        String source = node.has("source") && !node.get("source").isNull()
+                        ? node.get("source").asText() : null;
+        return FxRate.newBuilder()
+                     .setId(id)
+                     .setFromCurrency(from)
+                     .setToCurrency(to)
+                     .setRate(rate)
+                     .setTimestamp(timestamp)
+                     .setSource(source)
+                     .build();
+    }
+
     public void close() {
         try {
             if (connectionPool != null) {

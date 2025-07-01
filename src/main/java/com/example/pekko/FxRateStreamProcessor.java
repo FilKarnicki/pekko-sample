@@ -17,6 +17,7 @@ import org.apache.pekko.stream.javadsl.Source;
 import io.confluent.kafka.serializers.KafkaAvroDeserializer;
 import io.confluent.kafka.serializers.KafkaAvroDeserializerConfig;
 import com.example.pekko.model.FxRate;
+import com.example.pekko.RedisPublisher;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -36,10 +37,12 @@ public class FxRateStreamProcessor {
     private final RedisPublisher redisPublisher;
     private final ActorRef<FxRateStorage.Command> fxRateStorage;
     
-    public FxRateStreamProcessor(ActorSystem<?> system, ActorRef<FxRateStorage.Command> fxRateStorage) {
+    public FxRateStreamProcessor(ActorSystem<?> system,
+                                 ActorRef<FxRateStorage.Command> fxRateStorage,
+                                 RedisPublisher redisPublisher) {
         this.system = system;
         this.fxRateStorage = fxRateStorage;
-        this.redisPublisher = new RedisPublisher();
+        this.redisPublisher = redisPublisher;
         this.consumerSettings = createConsumerSettings();
     }
     
