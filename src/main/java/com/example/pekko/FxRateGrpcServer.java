@@ -1,14 +1,23 @@
 package com.example.pekko;
 
 import java.io.IOException;
+import java.util.Set;
+import java.util.HashSet;
 
 import org.apache.pekko.actor.typed.ActorRef;
 import org.apache.pekko.actor.typed.ActorSystem;
 import org.apache.pekko.actor.typed.Behavior;
 import org.apache.pekko.actor.typed.javadsl.Behaviors;
+import org.apache.pekko.cluster.ddata.typed.javadsl.DistributedData;
+import org.apache.pekko.cluster.ddata.typed.javadsl.Replicator;
+import org.apache.pekko.cluster.ddata.ORMultiMap;
+import org.apache.pekko.cluster.ddata.Key;
+import org.apache.pekko.cluster.ddata.ORMultiMapKey;
 import com.example.pekko.grpc.FxRateMessage;
 import com.example.pekko.grpc.FxRateServiceGrpc;
 import com.example.pekko.grpc.SubscribeRequest;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.grpc.Server;
 import io.grpc.ServerBuilder;
 import io.grpc.stub.StreamObserver;
@@ -20,13 +29,16 @@ import org.slf4j.LoggerFactory;
  */
 public class FxRateGrpcServer {
     private static final Logger log = LoggerFactory.getLogger(FxRateGrpcServer.class);
+    
     private final ActorSystem<?> system;
-    private final ActorRef<FxRateStorage.Command> storage;
+    private final ActorRef<Replicator.Command> replicator;
+    private final ObjectMapper objectMapper;
     private Server server;
 
-    public FxRateGrpcServer(ActorSystem<?> system, ActorRef<FxRateStorage.Command> storage) {
+    public FxRateGrpcServer(ActorSystem<?> system) {
         this.system = system;
-        this.storage = storage;
+        this.replicator = DistributedData.get(system).replicator();
+        this.objectMapper = new ObjectMapper();
     }
 
     /**
@@ -53,26 +65,20 @@ public class FxRateGrpcServer {
     private class FxRateServiceImpl extends FxRateServiceGrpc.FxRateServiceImplBase {
         @Override
         public void subscribeRates(SubscribeRequest request, StreamObserver<FxRateMessage> responseObserver) {
-            // Spawn an actor to forward storage updates to the gRPC stream
-            Behavior<FxRateStorage.FxRateUpdate> behavior = Behaviors.receiveMessage(update -> {
-                FxRateMessage msg = FxRateMessage.newBuilder()
-                        .setId(update.fxRate.getId().toString())
-                        .setFromCurrency(update.fxRate.getFromCurrency().toString())
-                        .setToCurrency(update.fxRate.getToCurrency().toString())
-                        .setRate(update.fxRate.getRate())
-                        .setTimestamp(update.fxRate.getTimestamp())
-                        .setSource(update.fxRate.getSource() != null ? update.fxRate.getSource().toString() : "")
-                        .build();
-                responseObserver.onNext(msg);
-                return Behaviors.same();
-            });
-            ActorRef<FxRateStorage.FxRateUpdate> subscriber = system.systemActorOf(
-                    behavior,
-                    "grpc-subscriber-" + System.currentTimeMillis(),
-                    org.apache.pekko.actor.typed.Props.empty());
-
-            // Subscribe to FX rate updates
-            storage.tell(new FxRateStorage.Subscribe(subscriber));
+            log.info("gRPC client subscribed to FX rate updates");
+            
+            // For now, send a demo message to show the connection works
+            // TODO: Implement proper distributed data change listening
+            FxRateMessage demoMsg = FxRateMessage.newBuilder()
+                    .setId("demo-001")
+                    .setFromCurrency("USD")
+                    .setToCurrency("EUR")
+                    .setRate(0.85)
+                    .setTimestamp(System.currentTimeMillis())
+                    .setSource("demo")
+                    .build();
+            responseObserver.onNext(demoMsg);
+            
             // Note: Stream stays open until client cancels or server stops
         }
     }

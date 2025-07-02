@@ -276,3 +276,180 @@ Caused by: java.net.ConnectException: Connection refused
 2025-07-02 12:21:33.753 [FxRateProcessor-pekko.actor.default-dispatcher-17] DEBUG com.example.pekko.FxRateStorage - Stored FxRate: USD_EUR = {"id":"247566c0-9aca-4d29-89dd-631119ff532a","fromCurrency":"USD","toCurrency":"EUR","rate":0.85,"timestamp":1751451693397,"source":"TestSource"}
 2025-07-02 12:21:33.754 [FxRateProcessor-pekko.actor.default-dispatcher-17] DEBUG com.example.pekko.FxRateStorage - Notified subscriber about FX rate update: USD_EUR
 2025-07-02 12:21:33.754 [ForkJoinPool.commonPool-worker-3] DEBUG c.e.pekko.FxRateStreamProcessor - Stored FxRate in ORMultiMap and Redis: 247566c0-9aca-4d29-89dd-631119ff532a
+2025-07-02 18:58:07.748 [Thread-2] INFO  com.example.pekko.App - Shutting down application
+2025-07-02 18:58:07.754 [FxRateProcessor-pekko.actor.default-dispatcher-37] INFO  o.a.pekko.actor.CoordinatedShutdown - Running CoordinatedShutdown with reason [JvmExitReason]
+2025-07-02 18:58:07.757 [ForkJoinPool.commonPool-worker-4] INFO  com.example.pekko.FxRateHttpServer - FxRate HTTP server stopped
+2025-07-02 18:58:07.757 [Thread-2] INFO  com.example.pekko.FxRateGrpcServer - gRPC server stopped
+2025-07-02 18:58:07.762 [FxRateProcessor-pekko.actor.default-dispatcher-37] INFO  org.apache.pekko.cluster.Cluster - Cluster Node [pekko://FxRateProcessor@127.0.0.1:25520] - Marked address [pekko://FxRateProcessor@127.0.0.1:25520] as [Leaving]
+2025-07-02 18:58:07.767 [Thread-2] INFO  com.example.pekko.RedisPublisher - RedisPublisher closed successfully
+2025-07-02 18:58:08.438 [FxRateProcessor-pekko.actor.default-dispatcher-37] INFO  org.apache.pekko.cluster.Cluster - Cluster Node [pekko://FxRateProcessor@127.0.0.1:25520] - Leader is moving node [pekko://FxRateProcessor@127.0.0.1:25520] to [Exiting]
+2025-07-02 18:58:08.441 [FxRateProcessor-pekko.actor.default-dispatcher-37] INFO  org.apache.pekko.cluster.Cluster - Cluster Node [pekko://FxRateProcessor@127.0.0.1:25520] - Exiting completed
+2025-07-02 18:58:08.441 [FxRateProcessor-pekko.actor.default-dispatcher-37] INFO  org.apache.pekko.cluster.Cluster - Cluster Node [pekko://FxRateProcessor@127.0.0.1:25520] - Shutting down...
+2025-07-02 18:58:08.441 [FxRateProcessor-pekko.actor.default-dispatcher-37] INFO  org.apache.pekko.cluster.Cluster - Cluster Node [pekko://FxRateProcessor@127.0.0.1:25520] - Successfully shut down
+2025-07-02 18:58:08.452 [FxRateProcessor-pekko.actor.default-dispatcher-17] INFO  o.a.p.r.RemoteActorRefProvider$RemotingTerminator - Shutting down remote daemon.
+2025-07-02 18:58:08.453 [FxRateProcessor-pekko.actor.default-dispatcher-17] INFO  o.a.p.r.RemoteActorRefProvider$RemotingTerminator - Remote daemon shut down; proceeding with flushing remote transports.
+2025-07-02 18:58:08.460 [FxRateProcessor-pekko.actor.default-dispatcher-17] INFO  o.a.p.r.RemoteActorRefProvider$RemotingTerminator - Remoting shut down.
+2025-07-02 18:58:08.462 [ForkJoinPool.commonPool-worker-4] ERROR com.example.pekko.App - Stream processing failed
+org.apache.pekko.stream.AbruptStageTerminationException: GraphStage [org.apache.pekko.stream.impl.fusing.GraphStages$IgnoreSink$$anon$10-ignoreSink] terminated abruptly, caused by for example materializer or actor system termination.
+2025-07-02 20:18:34.481 [main] INFO  com.example.pekko.App - Starting FxRate Kafka to Redis/ORMultiMap streaming application with HTTP server
+2025-07-02 20:18:34.748 [FxRateProcessor-pekko.actor.default-dispatcher-3] INFO  o.a.pekko.event.slf4j.Slf4jLogger - Slf4jLogger started
+2025-07-02 20:18:34.902 [FxRateProcessor-pekko.actor.default-dispatcher-3] INFO  o.a.p.remote.artery.ArteryTransport - Remoting started with transport [Artery tcp]; listening on address [pekko://FxRateProcessor@127.0.0.1:25520] with UID [-6474613775032767312]
+2025-07-02 20:18:34.908 [FxRateProcessor-pekko.actor.default-dispatcher-3] INFO  org.apache.pekko.cluster.Cluster - Cluster Node [pekko://FxRateProcessor@127.0.0.1:25520] - Starting up, Pekko version [1.1.4] ...
+2025-07-02 20:18:34.951 [FxRateProcessor-pekko.actor.default-dispatcher-3] INFO  org.apache.pekko.cluster.Cluster - Cluster Node [pekko://FxRateProcessor@127.0.0.1:25520] - Registered cluster JMX MBean [pekko:type=Cluster]
+2025-07-02 20:18:34.952 [FxRateProcessor-pekko.actor.default-dispatcher-3] INFO  org.apache.pekko.cluster.Cluster - Cluster Node [pekko://FxRateProcessor@127.0.0.1:25520] - Started up successfully
+2025-07-02 20:18:34.966 [FxRateProcessor-pekko.actor.default-dispatcher-3] INFO  org.apache.pekko.cluster.Cluster - Cluster Node [pekko://FxRateProcessor@127.0.0.1:25520] - No downing-provider-class configured, manual cluster downing required, see https://pekko.apache.org/docs/pekko/current/typed/cluster.html#downing
+2025-07-02 20:18:34.972 [FxRateProcessor-pekko.actor.default-dispatcher-3] INFO  org.apache.pekko.cluster.Cluster - Cluster Node [pekko://FxRateProcessor@127.0.0.1:25520] - Node [pekko://FxRateProcessor@127.0.0.1:25520] is JOINING itself (with roles [dc-default], version [0.0.0]) and forming new cluster
+2025-07-02 20:18:34.972 [FxRateProcessor-pekko.actor.default-dispatcher-3] INFO  org.apache.pekko.cluster.Cluster - Cluster Node [pekko://FxRateProcessor@127.0.0.1:25520] - is the new leader among reachable nodes (more leaders may exist)
+2025-07-02 20:18:34.976 [FxRateProcessor-pekko.actor.default-dispatcher-3] INFO  org.apache.pekko.cluster.Cluster - Cluster Node [pekko://FxRateProcessor@127.0.0.1:25520] - Leader is moving node [pekko://FxRateProcessor@127.0.0.1:25520] to [Up]
+2025-07-02 20:18:35.414 [main] INFO  com.example.pekko.App - Rehydrated 0 FX rates from Redis to ORMultiMap
+2025-07-02 20:18:35.504 [main] INFO  com.example.pekko.FxRateGrpcServer - gRPC server started, listening on port 50051
+2025-07-02 20:18:35.519 [main] INFO  i.c.k.s.KafkaAvroDeserializerConfig - KafkaAvroDeserializerConfig values: 
+	auto.register.schemas = true
+	avro.reflection.allow.null = false
+	avro.use.logical.type.converters = false
+	basic.auth.credentials.source = URL
+	basic.auth.user.info = [hidden]
+	bearer.auth.cache.expiry.buffer.seconds = 300
+	bearer.auth.client.id = null
+	bearer.auth.client.secret = null
+	bearer.auth.credentials.source = STATIC_TOKEN
+	bearer.auth.custom.provider.class = null
+	bearer.auth.identity.pool.id = null
+	bearer.auth.issuer.endpoint.url = null
+	bearer.auth.logical.cluster = null
+	bearer.auth.scope = null
+	bearer.auth.scope.claim.name = scope
+	bearer.auth.sub.claim.name = sub
+	bearer.auth.token = [hidden]
+	context.name.strategy = class io.confluent.kafka.serializers.context.NullContextNameStrategy
+	http.connect.timeout.ms = 60000
+	http.read.timeout.ms = 60000
+	id.compatibility.strict = true
+	key.subject.name.strategy = class io.confluent.kafka.serializers.subject.TopicNameStrategy
+	latest.cache.size = 1000
+	latest.cache.ttl.sec = -1
+	latest.compatibility.strict = true
+	max.schemas.per.subject = 1000
+	normalize.schemas = false
+	propagate.schema.tags = false
+	proxy.host = 
+	proxy.port = -1
+	rule.actions = []
+	rule.executors = []
+	rule.service.loader.enable = true
+	schema.format = null
+	schema.reflection = false
+	schema.registry.basic.auth.user.info = [hidden]
+	schema.registry.ssl.cipher.suites = null
+	schema.registry.ssl.enabled.protocols = [TLSv1.2, TLSv1.3]
+	schema.registry.ssl.endpoint.identification.algorithm = https
+	schema.registry.ssl.engine.factory.class = null
+	schema.registry.ssl.key.password = null
+	schema.registry.ssl.keymanager.algorithm = SunX509
+	schema.registry.ssl.keystore.certificate.chain = null
+	schema.registry.ssl.keystore.key = null
+	schema.registry.ssl.keystore.location = null
+	schema.registry.ssl.keystore.password = null
+	schema.registry.ssl.keystore.type = JKS
+	schema.registry.ssl.protocol = TLSv1.3
+	schema.registry.ssl.provider = null
+	schema.registry.ssl.secure.random.implementation = null
+	schema.registry.ssl.trustmanager.algorithm = PKIX
+	schema.registry.ssl.truststore.certificates = null
+	schema.registry.ssl.truststore.location = null
+	schema.registry.ssl.truststore.password = null
+	schema.registry.ssl.truststore.type = JKS
+	schema.registry.url = [http://localhost:8081]
+	specific.avro.key.type = null
+	specific.avro.reader = true
+	specific.avro.value.type = null
+	use.latest.version = false
+	use.latest.with.metadata = null
+	use.schema.id = -1
+	value.subject.name.strategy = class io.confluent.kafka.serializers.subject.TopicNameStrategy
+
+2025-07-02 20:18:35.519 [main] INFO  i.c.k.s.KafkaAvroDeserializerConfig - KafkaAvroDeserializerConfig values: 
+	auto.register.schemas = true
+	avro.reflection.allow.null = false
+	avro.use.logical.type.converters = false
+	basic.auth.credentials.source = URL
+	basic.auth.user.info = [hidden]
+	bearer.auth.cache.expiry.buffer.seconds = 300
+	bearer.auth.client.id = null
+	bearer.auth.client.secret = null
+	bearer.auth.credentials.source = STATIC_TOKEN
+	bearer.auth.custom.provider.class = null
+	bearer.auth.identity.pool.id = null
+	bearer.auth.issuer.endpoint.url = null
+	bearer.auth.logical.cluster = null
+	bearer.auth.scope = null
+	bearer.auth.scope.claim.name = scope
+	bearer.auth.sub.claim.name = sub
+	bearer.auth.token = [hidden]
+	context.name.strategy = class io.confluent.kafka.serializers.context.NullContextNameStrategy
+	http.connect.timeout.ms = 60000
+	http.read.timeout.ms = 60000
+	id.compatibility.strict = true
+	key.subject.name.strategy = class io.confluent.kafka.serializers.subject.TopicNameStrategy
+	latest.cache.size = 1000
+	latest.cache.ttl.sec = -1
+	latest.compatibility.strict = true
+	max.schemas.per.subject = 1000
+	normalize.schemas = false
+	propagate.schema.tags = false
+	proxy.host = 
+	proxy.port = -1
+	rule.actions = []
+	rule.executors = []
+	rule.service.loader.enable = true
+	schema.format = null
+	schema.reflection = false
+	schema.registry.basic.auth.user.info = [hidden]
+	schema.registry.ssl.cipher.suites = null
+	schema.registry.ssl.enabled.protocols = [TLSv1.2, TLSv1.3]
+	schema.registry.ssl.endpoint.identification.algorithm = https
+	schema.registry.ssl.engine.factory.class = null
+	schema.registry.ssl.key.password = null
+	schema.registry.ssl.keymanager.algorithm = SunX509
+	schema.registry.ssl.keystore.certificate.chain = null
+	schema.registry.ssl.keystore.key = null
+	schema.registry.ssl.keystore.location = null
+	schema.registry.ssl.keystore.password = null
+	schema.registry.ssl.keystore.type = JKS
+	schema.registry.ssl.protocol = TLSv1.3
+	schema.registry.ssl.provider = null
+	schema.registry.ssl.secure.random.implementation = null
+	schema.registry.ssl.trustmanager.algorithm = PKIX
+	schema.registry.ssl.truststore.certificates = null
+	schema.registry.ssl.truststore.location = null
+	schema.registry.ssl.truststore.password = null
+	schema.registry.ssl.truststore.type = JKS
+	schema.registry.url = [http://localhost:8081]
+	specific.avro.key.type = null
+	specific.avro.reader = true
+	specific.avro.value.type = null
+	use.latest.version = false
+	use.latest.with.metadata = null
+	use.schema.id = -1
+	value.subject.name.strategy = class io.confluent.kafka.serializers.subject.TopicNameStrategy
+
+2025-07-02 20:18:35.580 [main] INFO  c.e.pekko.FxRateStreamProcessor - Starting FxRate stream processing from Kafka topic 'fx-rates'
+2025-07-02 20:18:35.595 [main] INFO  com.example.pekko.App - FxRate application started successfully
+2025-07-02 20:18:35.595 [main] INFO  com.example.pekko.App - gRPC streaming endpoint available at port 50051
+2025-07-02 20:18:35.595 [main] INFO  com.example.pekko.App - Using Pekko distributed data ORMultiMap for storage
+2025-07-02 20:18:35.596 [FxRateProcessor-pekko.actor.default-dispatcher-5] INFO  o.a.p.k.internal.SingleSourceLogic - [56c7d] Starting. StageActor Actor[pekko://FxRateProcessor/system/Materializers/StreamSupervisor-0/$$a#-965187956]
+2025-07-02 20:20:16.700 [grpc-default-executor-0] INFO  com.example.pekko.FxRateGrpcServer - gRPC client subscribed to FX rate updates
+2025-07-02 20:56:44.764 [Thread-2] INFO  com.example.pekko.App - Shutting down application
+2025-07-02 20:56:44.768 [FxRateProcessor-pekko.actor.default-dispatcher-5] INFO  o.a.pekko.actor.CoordinatedShutdown - Running CoordinatedShutdown with reason [JvmExitReason]
+2025-07-02 20:56:44.770 [Thread-2] INFO  com.example.pekko.FxRateGrpcServer - gRPC server stopped
+2025-07-02 20:56:44.774 [FxRateProcessor-pekko.actor.default-dispatcher-5] INFO  org.apache.pekko.cluster.Cluster - Cluster Node [pekko://FxRateProcessor@127.0.0.1:25520] - Marked address [pekko://FxRateProcessor@127.0.0.1:25520] as [Leaving]
+2025-07-02 20:56:44.782 [Thread-2] INFO  com.example.pekko.RedisPublisher - RedisPublisher closed successfully
+2025-07-02 20:56:45.787 [FxRateProcessor-pekko.actor.default-dispatcher-5] INFO  org.apache.pekko.cluster.Cluster - Cluster Node [pekko://FxRateProcessor@127.0.0.1:25520] - Leader is moving node [pekko://FxRateProcessor@127.0.0.1:25520] to [Exiting]
+2025-07-02 20:56:45.791 [FxRateProcessor-pekko.actor.default-dispatcher-5] INFO  org.apache.pekko.cluster.Cluster - Cluster Node [pekko://FxRateProcessor@127.0.0.1:25520] - Exiting completed
+2025-07-02 20:56:45.792 [FxRateProcessor-pekko.actor.default-dispatcher-5] INFO  org.apache.pekko.cluster.Cluster - Cluster Node [pekko://FxRateProcessor@127.0.0.1:25520] - Shutting down...
+2025-07-02 20:56:45.793 [FxRateProcessor-pekko.actor.default-dispatcher-5] INFO  org.apache.pekko.cluster.Cluster - Cluster Node [pekko://FxRateProcessor@127.0.0.1:25520] - Successfully shut down
+2025-07-02 20:56:45.802 [FxRateProcessor-pekko.actor.default-dispatcher-3] INFO  o.a.p.r.RemoteActorRefProvider$RemotingTerminator - Shutting down remote daemon.
+2025-07-02 20:56:45.802 [FxRateProcessor-pekko.actor.default-dispatcher-3] INFO  o.a.p.r.RemoteActorRefProvider$RemotingTerminator - Remote daemon shut down; proceeding with flushing remote transports.
+2025-07-02 20:56:45.811 [FxRateProcessor-pekko.actor.default-dispatcher-3] INFO  o.a.p.r.RemoteActorRefProvider$RemotingTerminator - Remoting shut down.
+2025-07-02 20:56:45.813 [ForkJoinPool.commonPool-worker-4] ERROR com.example.pekko.App - Stream processing failed
+org.apache.pekko.stream.AbruptStageTerminationException: GraphStage [org.apache.pekko.stream.impl.fusing.GraphStages$IgnoreSink$$anon$10-ignoreSink] terminated abruptly, caused by for example materializer or actor system termination.
