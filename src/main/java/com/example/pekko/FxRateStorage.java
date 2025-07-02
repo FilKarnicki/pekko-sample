@@ -6,11 +6,18 @@ import org.apache.pekko.actor.typed.javadsl.AbstractBehavior;
 import org.apache.pekko.actor.typed.javadsl.ActorContext;
 import org.apache.pekko.actor.typed.javadsl.Behaviors;
 import org.apache.pekko.actor.typed.javadsl.Receive;
+import org.apache.pekko.cluster.ddata.typed.javadsl.DistributedData;
+import org.apache.pekko.cluster.ddata.typed.javadsl.Replicator;
+import org.apache.pekko.cluster.ddata.ORMultiMap;
+import org.apache.pekko.cluster.ddata.Key;
+import org.apache.pekko.cluster.ddata.SelfUniqueAddress;
+import org.apache.pekko.cluster.ddata.typed.javadsl.ReplicatorMessageAdapter;
 import com.example.pekko.model.FxRate;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
@@ -114,9 +121,13 @@ public class FxRateStorage extends AbstractBehavior<FxRateStorage.Command> {
         }
     }
     
-    private final ConcurrentHashMap<String, Set<String>> storage;
+    private static final Key<ORMultiMap<String, String>> FX_RATES_KEY = 
+        Key.create("fx-rates");
+    
+    private final ActorRef<Replicator.Command> replicator;
     private final ObjectMapper objectMapper;
     private final Set<ActorRef<FxRateUpdate>> subscribers;
+    private final SelfUniqueAddress node;
     
     public static Behavior<Command> create() {
         return Behaviors.setup(FxRateStorage::new);
@@ -124,11 +135,12 @@ public class FxRateStorage extends AbstractBehavior<FxRateStorage.Command> {
     
     private FxRateStorage(ActorContext<Command> context) {
         super(context);
-        this.storage = new ConcurrentHashMap<>();
+        this.replicator = DistributedData.get(context.getSystem()).replicator();
         this.objectMapper = new ObjectMapper();
         this.subscribers = ConcurrentHashMap.newKeySet();
+        this.node = DistributedData.get(context.getSystem()).selfUniqueAddress();
         
-        log.info("FxRateStorage actor started with in-memory storage and subscription support");
+        log.info("FxRateStorage agent started with Pekko distributed data ORMultiMap");
     }
     
     @Override
@@ -147,9 +159,15 @@ public class FxRateStorage extends AbstractBehavior<FxRateStorage.Command> {
             String currencyPair = command.fxRate.getFromCurrency() + "_" + command.fxRate.getToCurrency();
             String fxRateJson = objectMapper.writeValueAsString(convertFxRateToJson(command.fxRate));
             
-            storage.computeIfAbsent(currencyPair, k -> ConcurrentHashMap.newKeySet()).add(fxRateJson);
+            // Update distributed data using delta operation
+            replicator.tell(new Replicator.Update<ORMultiMap<String, String>>(
+                FX_RATES_KEY,
+                ORMultiMap.<String, String>empty(),
+                Replicator.writeLocal(),
+                curr -> curr.addBinding(node, currencyPair, fxRateJson)
+            ));
             
-            log.debug("Stored FxRate: {} = {}", currencyPair, fxRateJson);
+            log.debug("Stored FxRate with distributed data: {} = {}", currencyPair, fxRateJson);
             
             // Notify all subscribers about the new FX rate
             FxRateUpdate update = new FxRateUpdate(command.fxRate, currencyPair);
@@ -159,7 +177,6 @@ public class FxRateStorage extends AbstractBehavior<FxRateStorage.Command> {
                     log.debug("Notified subscriber about FX rate update: {}", currencyPair);
                 } catch (Exception e) {
                     log.warn("Failed to notify subscriber about FX rate update", e);
-                    // Remove dead subscribers
                     subscribers.remove(subscriber);
                 }
             });
@@ -175,15 +192,48 @@ public class FxRateStorage extends AbstractBehavior<FxRateStorage.Command> {
     }
     
     private Behavior<Command> getFxRates(GetFxRates command) {
-        Set<String> fxRates = storage.getOrDefault(command.currencyPair, new HashSet<>());
-        command.replyTo.tell(new GetResponse(new HashSet<>(fxRates), true));
+        ActorRef<Replicator.GetResponse<ORMultiMap<String, String>>> replyAdapter = 
+            getContext().<Replicator.GetResponse<ORMultiMap<String, String>>>messageAdapter(Replicator.GetResponse.class, response -> {
+                if (response instanceof Replicator.GetSuccess) {
+                    Replicator.GetSuccess<ORMultiMap<String, String>> success = 
+                        (Replicator.GetSuccess<ORMultiMap<String, String>>) response;
+                    scala.Option<scala.collection.immutable.Set<String>> optionSet = success.dataValue().get(command.currencyPair);
+                    Set<String> fxRates = optionSet.isDefined() ? 
+                        scala.jdk.javaapi.CollectionConverters.asJava(optionSet.get()) : 
+                        new HashSet<>();
+                    command.replyTo.tell(new GetResponse(new HashSet<>(fxRates), true));
+                } else {
+                    log.debug("No data found for currency pair: {}", command.currencyPair);
+                    command.replyTo.tell(new GetResponse(new HashSet<>(), true));
+                }
+                return new GetFxRates("dummy", command.replyTo); // dummy command to satisfy type system
+            });
+            
+        replicator.tell(new Replicator.Get<>(FX_RATES_KEY, Replicator.readLocal(), replyAdapter));
         return this;
     }
     
     private Behavior<Command> getAllFxRates(GetAllFxRates command) {
-        Map<String, Set<String>> allRates = new HashMap<>();
-        storage.forEach((key, value) -> allRates.put(key, new HashSet<>(value)));
-        command.replyTo.tell(new GetAllResponse(allRates, true));
+        ActorRef<Replicator.GetResponse<ORMultiMap<String, String>>> replyAdapter = 
+            getContext().<Replicator.GetResponse<ORMultiMap<String, String>>>messageAdapter(Replicator.GetResponse.class, response -> {
+                if (response instanceof Replicator.GetSuccess) {
+                    Replicator.GetSuccess<ORMultiMap<String, String>> success = 
+                        (Replicator.GetSuccess<ORMultiMap<String, String>>) response;
+                    scala.collection.immutable.Map<String, scala.collection.immutable.Set<String>> scalaMap = 
+                        success.dataValue().getEntries();
+                    Map<String, Set<String>> allRates = new HashMap<>();
+                    scala.jdk.javaapi.CollectionConverters.asJava(scalaMap).forEach((key, scalaSet) ->
+                        allRates.put(key, new HashSet<>(scala.jdk.javaapi.CollectionConverters.asJava(scalaSet)))
+                    );
+                    command.replyTo.tell(new GetAllResponse(allRates, true));
+                } else {
+                    log.debug("No distributed data found");
+                    command.replyTo.tell(new GetAllResponse(new HashMap<>(), true));
+                }
+                return new GetAllFxRates(command.replyTo); // dummy command to satisfy type system
+            });
+            
+        replicator.tell(new Replicator.Get<>(FX_RATES_KEY, Replicator.readLocal(), replyAdapter));
         return this;
     }
     
@@ -198,6 +248,7 @@ public class FxRateStorage extends AbstractBehavior<FxRateStorage.Command> {
         log.info("Removed WebSocket subscriber. Total subscribers: {}", subscribers.size());
         return this;
     }
+    
     
     private Object convertFxRateToJson(FxRate fxRate) {
         return new Object() {
