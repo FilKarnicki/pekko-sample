@@ -8,6 +8,11 @@ import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.pekko.Done;
 import org.apache.pekko.actor.typed.ActorRef;
 import org.apache.pekko.actor.typed.ActorSystem;
+import org.apache.pekko.actor.typed.Behavior;
+import org.apache.pekko.actor.typed.javadsl.AbstractBehavior;
+import org.apache.pekko.actor.typed.javadsl.ActorContext;
+import org.apache.pekko.actor.typed.javadsl.Behaviors;
+import org.apache.pekko.actor.typed.javadsl.Receive;
 import org.apache.pekko.cluster.ddata.Key;
 import org.apache.pekko.cluster.ddata.LWWMap;
 import org.apache.pekko.cluster.ddata.LWWMapKey;
@@ -27,12 +32,30 @@ import org.slf4j.LoggerFactory;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Optional;
 import java.util.concurrent.CompletionStage;
 
-public class FxRateStreamProcessor {
+public class FxRateStreamProcessor extends AbstractBehavior<FxRateStreamProcessor.Command> {
     private static final Logger log = LoggerFactory.getLogger(FxRateStreamProcessor.class);
     public static final Key<LWWMap<String, FxRate>> FX_RATES_KEY = LWWMapKey.<String, FxRate>create("fx-rates");
+    
+    public interface Command {}
+    
+    public static final class StartProcessing implements Command {
+        public final ActorRef<Done> replyTo;
+        
+        public StartProcessing(ActorRef<Done> replyTo) {
+            this.replyTo = replyTo;
+        }
+    }
+    
+    public static final class StoreFxRate implements Command {
+        public final FxRate fxRate;
+        
+        public StoreFxRate(FxRate fxRate) {
+            this.fxRate = fxRate;
+        }
+    }
+    
     
     private final ActorSystem<?> system;
     private final ConsumerSettings<String, Object> consumerSettings;
@@ -41,7 +64,12 @@ public class FxRateStreamProcessor {
     private final SelfUniqueAddress node;
     private final FxRateTimestampExtractor timestampExtractor;
     
-    public FxRateStreamProcessor(ActorSystem<?> system, RedisPublisher redisPublisher) {
+    public static Behavior<Command> create(ActorSystem<?> system, RedisPublisher redisPublisher) {
+        return Behaviors.setup(context -> new FxRateStreamProcessor(context, system, redisPublisher));
+    }
+    
+    private FxRateStreamProcessor(ActorContext<Command> context, ActorSystem<?> system, RedisPublisher redisPublisher) {
+        super(context);
         this.system = system;
         this.redisPublisher = redisPublisher;
         this.replicator = DistributedData.get(system).replicator();
@@ -51,6 +79,79 @@ public class FxRateStreamProcessor {
         
         log.info("Using timestamp extractor: {}", timestampExtractor);
     }
+    
+    @Override
+    public Receive<Command> createReceive() {
+        return newReceiveBuilder()
+                .onMessage(StartProcessing.class, this::onStartProcessing)
+                .onMessage(StoreFxRate.class, this::onStoreFxRate)
+                .build();
+    }
+    
+    private Behavior<Command> onStartProcessing(StartProcessing command) {
+        log.info("Starting FxRate stream processing from Kafka topic 'fx-rates'");
+        final var committerSettings = CommitterSettings.create(system);
+        
+        Consumer.committableSource(consumerSettings, Subscriptions.topics("fx-rates"))
+                .map(record -> {
+                    FxRate fxRate = (FxRate) record.record().value();
+                    log.debug("Received FxRate: {} {} -> {} at rate {}", 
+                             fxRate.getId(), fxRate.getFromCurrency(), fxRate.getToCurrency(), fxRate.getRate());
+                    return Pair.create(fxRate, record.committableOffset());
+                })
+                .mapAsync(10, pair -> {
+                    // Send to self for processing
+                    getContext().getSelf().tell(new StoreFxRate(pair.first()));
+                    
+                    // Also publish to Redis for backward compatibility
+                    return redisPublisher.publishFxRate(pair.first())
+                            .thenApply(redisResult -> {
+                                log.debug("Stored FxRate in Redis: {}", pair.first().getId());
+                                return pair.second();
+                            }).exceptionally(throwable -> {
+                                log.error("Failed to store FxRate in Redis: {}", pair.first().getId(), throwable);
+                                return pair.second(); // Continue processing even if Redis fails
+                            });
+                }).toMat(Committer.sink(committerSettings), Keep.right())
+                .run(system)
+                .whenComplete((done, throwable) -> {
+                    if (throwable != null) {
+                        log.error("Stream processing failed", throwable);
+                    } else {
+                        log.info("Stream processing completed successfully");
+                    }
+                    command.replyTo.tell(done);
+                });
+        
+        return this;
+    }
+    
+    private Behavior<Command> onStoreFxRate(StoreFxRate command) {
+        try {
+            FxRate fxRate = command.fxRate;
+            String currencyPair = fxRate.getFromCurrency() + "_" + fxRate.getToCurrency();
+            long timestamp = timestampExtractor.apply(fxRate);
+
+            replicator.tell(new Replicator.Update<>(
+                    FX_RATES_KEY,
+                    LWWMap.empty(),
+                    Replicator.writeLocal(),
+                    system.ignoreRef(), // Fire and forget - no response needed
+                    curr -> curr.put(node, currencyPair, fxRate, new LWWRegister.Clock<FxRate>() {
+                        @Override
+                        public long apply(long currentTimestamp, FxRate value) {
+                            return timestamp; // Use our configurable timestamp
+                        }
+                    })));
+
+            log.debug("Sent LWWMap update for FxRate: {} = {} (timestamp: {})", currencyPair, fxRate.getId(), timestamp);
+        } catch (Exception e) {
+            log.error("Failed to store FxRate in LWWMap: {}", command.fxRate.getId(), e);
+        }
+        
+        return this;
+    }
+    
     
     private ConsumerSettings<String, Object> createConsumerSettings() {
         Map<String, Object> avroConfig = new HashMap<>();
@@ -66,52 +167,5 @@ public class FxRateStreamProcessor {
                 .withProperty("schema.registry.url", "http://localhost:8081")
                 .withProperty(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest")
                 .withProperty(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
-    }
-    
-    public CompletionStage<Done> startProcessing() {
-        log.info("Starting FxRate stream processing from Kafka topic 'fx-rates'");
-        final var committerSettings = CommitterSettings.create(system);
-        return Consumer.committableSource(consumerSettings, Subscriptions.topics("fx-rates"))
-                .map(record -> {
-                    FxRate fxRate = (FxRate) record.record().value();
-                    log.debug("Received FxRate: {} {} -> {} at rate {}", 
-                             fxRate.getId(), fxRate.getFromCurrency(), fxRate.getToCurrency(), fxRate.getRate());
-                    return Pair.create(fxRate, record.committableOffset());
-                })
-                .mapAsync(10, pair -> {
-                    // Store in LWWMap directly
-                    final var fxRate = pair.first();
-                    try {
-                        String currencyPair = fxRate.getFromCurrency() + "_" + fxRate.getToCurrency();
-                        long timestamp = timestampExtractor.apply(fxRate);
-
-                        replicator.tell(new Replicator.Update<>(
-                                FX_RATES_KEY,
-                                LWWMap.empty(),
-                                Replicator.writeLocal(),
-                                ???
-                                curr -> curr.put(node, currencyPair, fxRate, new LWWRegister.Clock<FxRate>() {
-                                    @Override
-                                    public long apply(long currentTimestamp, FxRate value) {
-                                        return timestamp; // Use our configurable timestamp
-                                    }
-                                })));
-
-                        log.debug("Stored FxRate in LWWMap: {} = {} (timestamp: {})", currencyPair, fxRate.getId(), timestamp);
-                    } catch (Exception e) {
-                        log.error("Failed to store FxRate in LWWMap: {}", fxRate.getId(), e);
-                    }
-                    
-                    // Also publish to Redis for backward compatibility
-                    return redisPublisher.publishFxRate(fxRate)
-                            .thenApply(redisResult -> {
-                                log.debug("Stored FxRate in LWWMap and Redis: {}", fxRate.getId());
-                                return pair.second();
-                            }).exceptionally(throwable -> {
-                                log.error("Failed to store FxRate in Redis: {}", fxRate.getId(), throwable);
-                                return pair.second(); // Continue processing even if Redis fails
-                            });
-                }).toMat(Committer.sink(committerSettings), Keep.right())
-                .run(system);
     }
 }

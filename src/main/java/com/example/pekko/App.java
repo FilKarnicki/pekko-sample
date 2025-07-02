@@ -1,5 +1,6 @@
 package com.example.pekko;
 
+import com.example.pekko.model.FxRate2;
 import org.apache.pekko.actor.typed.ActorRef;
 import org.apache.pekko.actor.typed.ActorSystem;
 import org.apache.pekko.actor.typed.javadsl.Behaviors;
@@ -55,7 +56,7 @@ public class App {
                                 FX_RATES_KEY,
                                 LWWMap.empty(),
                                 Replicator.writeLocal(),
-                                null,
+                                system.ignoreRef(),
                                 curr -> curr.put(node, currencyPair, rate, new LWWRegister.Clock<FxRate>() {
                                     @Override
                                     public long apply(long currentTimestamp, FxRate value) {
@@ -84,17 +85,14 @@ public class App {
             FxRateGrpcServer grpcServer = new FxRateGrpcServer(system);
             grpcServer.start(grpcPort);
 
-            // Create and start the stream processor
-            FxRateStreamProcessor processor = new FxRateStreamProcessor(system, redisPublisher);
-            CompletionStage<Done> streamCompletion = processor.startProcessing();
+            // Create and start the stream processor actor
+            ActorRef<FxRateStreamProcessor.Command> processorRef = system.systemActorOf(
+                    FxRateStreamProcessor.create(system, redisPublisher), 
+                    "fx-rate-processor",
+                    org.apache.pekko.actor.typed.Props.empty());
             
-            streamCompletion.whenComplete((done, throwable) -> {
-                if (throwable != null) {
-                    log.error("Stream processing failed", throwable);
-                } else {
-                    log.info("Stream processing completed successfully");
-                }
-            });
+            // Start processing (fire and forget)
+            processorRef.tell(new FxRateStreamProcessor.StartProcessing(system.ignoreRef()));
             
             log.info("FxRate application started successfully");
             log.info("gRPC streaming endpoint available at port {}", grpcPort);
