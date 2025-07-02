@@ -148,12 +148,30 @@ public class FxRateStreamProcessor extends AbstractBehavior<FxRateStreamProcesso
                         }
                     })));
 
+            // SOLUTION: Directly notify gRPC streams of the change we just made
+            // This avoids the need to track previous state entirely!
+            system.eventStream().tell(
+                new org.apache.pekko.actor.typed.eventstream.EventStream.Publish<>(
+                    new FxRateUpdated(currencyPair, rateMsg)
+                )
+            );
+
             log.debug("Sent LWWMap update for FxRate: {} = {} (timestamp: {})", currencyPair, fxRate.getId(), timestamp);
         } catch (Exception e) {
             log.error("Failed to store FxRate in LWWMap: {}", command.fxRate.getId(), e);
         }
         
         return this;
+    }
+    
+    public static final class FxRateUpdated {
+        public final String currencyPair;
+        public final FxRateMessage fxRateMessage;
+        
+        public FxRateUpdated(String currencyPair, FxRateMessage fxRateMessage) {
+            this.currencyPair = currencyPair;
+            this.fxRateMessage = fxRateMessage;
+        }
     }
     
     

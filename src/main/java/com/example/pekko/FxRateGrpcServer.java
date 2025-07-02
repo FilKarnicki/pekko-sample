@@ -3,6 +3,8 @@ package com.example.pekko;
 import java.io.IOException;
 import java.util.Set;
 import java.util.HashSet;
+import java.util.Map;
+import java.util.HashMap;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.apache.pekko.actor.typed.ActorRef;
@@ -114,19 +116,11 @@ public class FxRateGrpcServer {
             }
         }
         
-        private static final class ChangeAdapter implements Command {
-            public final Replicator.Changed<LWWMap<String, FxRateMessage>> change;
+        private static final class FxRateUpdateAdapter implements Command {
+            public final FxRateStreamProcessor.FxRateUpdated update;
             
-            public ChangeAdapter(Replicator.Changed<LWWMap<String, FxRateMessage>> change) {
-                this.change = change;
-            }
-        }
-        
-        private static final class SubscribeResponseAdapter implements Command {
-            public final Replicator.SubscribeResponse<LWWMap<String, FxRateMessage>> response;
-            
-            public SubscribeResponseAdapter(Replicator.SubscribeResponse<LWWMap<String, FxRateMessage>> response) {
-                this.response = response;
+            public FxRateUpdateAdapter(FxRateStreamProcessor.FxRateUpdated update) {
+                this.update = update;
             }
         }
         
@@ -141,12 +135,15 @@ public class FxRateGrpcServer {
             super(context);
             this.replicator = replicator;
             
-            // Subscribe to LWWMap changes
-            ActorRef<Replicator.SubscribeResponse<LWWMap<String, FxRateMessage>>> subscribeAdapter =
-                    context.messageAdapter(Replicator.SubscribeResponse.class, SubscribeResponseAdapter::new);
+            // BETTER APPROACH: Subscribe to direct FX rate update events instead of LWWMap changes
+            // This eliminates the need to track previous state or compute deltas!
+            ActorRef<FxRateStreamProcessor.FxRateUpdated> updateAdapter = 
+                    context.messageAdapter(FxRateStreamProcessor.FxRateUpdated.class, FxRateUpdateAdapter::new);
             
-            replicator.tell(new Replicator.Subscribe<>(FX_RATES_KEY, subscribeAdapter));
-            log.info("Subscribed to LWWMap changes for gRPC streaming");
+            context.getSystem().eventStream().tell(new org.apache.pekko.actor.typed.eventstream.EventStream.Subscribe<>(
+                    FxRateStreamProcessor.FxRateUpdated.class, updateAdapter));
+            
+            log.info("Subscribed to direct FX rate update events for gRPC streaming");
         }
         
         @Override
@@ -154,9 +151,8 @@ public class FxRateGrpcServer {
             return newReceiveBuilder()
                     .onMessage(RegisterStream.class, this::onRegisterStream)
                     .onMessage(UnregisterStream.class, this::onUnregisterStream)
-                    .onMessage(ChangeAdapter.class, this::onLWWMapChange)
-                .onMessage(SubscribeResponseAdapter.class, this::onSubscribeResponse)
-                        .build();
+                    .onMessage(FxRateUpdateAdapter.class, this::onFxRateUpdate)
+                    .build();
         }
         
         private Behavior<Command> onRegisterStream(RegisterStream command) {
@@ -171,41 +167,26 @@ public class FxRateGrpcServer {
             return this;
         }
         
-        private Behavior<Command> onSubscribeResponse(SubscribeResponseAdapter adapter) {
-            if (adapter.response instanceof Replicator.Changed) {
-                return onLWWMapChange(new ChangeAdapter((Replicator.Changed<LWWMap<String, FxRateMessage>>) adapter.response));
-            } else {
-                log.debug("Received subscribe response: {}", adapter.response.getClass().getSimpleName());
-                return this;
-            }
-        }
-        
-        private Behavior<Command> onLWWMapChange(ChangeAdapter adapter) {
-            Replicator.Changed<LWWMap<String, FxRateMessage>> change = adapter.change;
-            LWWMap<String, FxRateMessage> lwwMap = change.dataValue();
+        private Behavior<Command> onFxRateUpdate(FxRateUpdateAdapter adapter) {
+            FxRateStreamProcessor.FxRateUpdated update = adapter.update;
+            FxRateMessage fxRate = update.fxRateMessage;
+            
+            log.debug("Received direct FX rate update: {} = {}, broadcasting to {} active streams", 
+                     update.currencyPair, fxRate.getId(), activeStreams.size());
 
-            log.debug("LWWMap changed, broadcasting to {} active streams", activeStreams.size());
-
-            // Broadcast all current rates to all active streams
-            for (var entry : lwwMap.getEntries().entrySet()) {
-                String currencyPair = entry.getKey();
-                FxRateMessage fxRate = entry.getValue();
-
-
-                // Send to all active streams
-                Set<StreamObserver<FxRateMessage>> streamsToRemove = new HashSet<>();
-                for (StreamObserver<FxRateMessage> observer : activeStreams) {
-                    try {
-                        observer.onNext(fxRate);
-                    } catch (Exception e) {
-                        log.warn("Failed to send update to gRPC stream, removing observer", e);
-                        streamsToRemove.add(observer);
-                    }
+            // Broadcast the single changed entry to all active streams
+            Set<StreamObserver<FxRateMessage>> streamsToRemove = new HashSet<>();
+            for (StreamObserver<FxRateMessage> observer : activeStreams) {
+                try {
+                    observer.onNext(fxRate);
+                } catch (Exception e) {
+                    log.warn("Failed to send update to gRPC stream, removing observer", e);
+                    streamsToRemove.add(observer);
                 }
-
-                // Remove failed streams
-                activeStreams.removeAll(streamsToRemove);
             }
+
+            // Remove failed streams
+            activeStreams.removeAll(streamsToRemove);
 
             return this;
         }
