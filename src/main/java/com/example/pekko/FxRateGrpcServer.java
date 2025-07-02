@@ -10,12 +10,12 @@ import org.apache.pekko.actor.typed.Behavior;
 import org.apache.pekko.actor.typed.javadsl.Behaviors;
 import org.apache.pekko.cluster.ddata.typed.javadsl.DistributedData;
 import org.apache.pekko.cluster.ddata.typed.javadsl.Replicator;
-import org.apache.pekko.cluster.ddata.ORMultiMap;
+import org.apache.pekko.cluster.ddata.LWWMap;
 import org.apache.pekko.cluster.ddata.Key;
-import org.apache.pekko.cluster.ddata.ORMultiMapKey;
 import com.example.pekko.grpc.FxRateMessage;
 import com.example.pekko.grpc.FxRateServiceGrpc;
 import com.example.pekko.grpc.SubscribeRequest;
+import com.example.pekko.model.FxRate;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.grpc.Server;
@@ -65,21 +65,28 @@ public class FxRateGrpcServer {
     private class FxRateServiceImpl extends FxRateServiceGrpc.FxRateServiceImplBase {
         @Override
         public void subscribeRates(SubscribeRequest request, StreamObserver<FxRateMessage> responseObserver) {
-            log.info("gRPC client subscribed to FX rate updates");
+            log.info("gRPC client subscribed to FX rate updates from LWWMap");
             
-            // For now, send a demo message to show the connection works
-            // TODO: Implement proper distributed data change listening
+            // For demonstration, send a message indicating LWWMap is being used
             FxRateMessage demoMsg = FxRateMessage.newBuilder()
-                    .setId("demo-001")
+                    .setId("lww-demo-001")
                     .setFromCurrency("USD")
                     .setToCurrency("EUR")
                     .setRate(0.85)
                     .setTimestamp(System.currentTimeMillis())
-                    .setSource("demo")
+                    .setSource("LWWMap Demo")
                     .build();
             responseObserver.onNext(demoMsg);
             
-            // Note: Stream stays open until client cancels or server stops
+            log.info("LWWMap-based gRPC service is ready. Use timestamp extractor: {}", 
+                     FxRateTimestampExtractor.getConfigured());
+            
+            // Note: In a full implementation, you would:
+            // 1. Subscribe to LWWMap changes via replicator.tell(new Replicator.Subscribe<>(...))
+            // 2. Forward updates to the responseObserver
+            // 3. Keep the stream open for real-time updates
+            
+            responseObserver.onCompleted();
         }
     }
 }

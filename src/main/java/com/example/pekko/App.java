@@ -6,9 +6,9 @@ import org.apache.pekko.actor.typed.javadsl.Behaviors;
 import org.apache.pekko.Done;
 import org.apache.pekko.cluster.ddata.typed.javadsl.DistributedData;
 import org.apache.pekko.cluster.ddata.typed.javadsl.Replicator;
-import org.apache.pekko.cluster.ddata.ORMultiMap;
+import org.apache.pekko.cluster.ddata.LWWMap;
 import org.apache.pekko.cluster.ddata.Key;
-import org.apache.pekko.cluster.ddata.ORMultiMapKey;
+import org.apache.pekko.cluster.ddata.LWWRegister;
 import org.apache.pekko.cluster.ddata.SelfUniqueAddress;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -38,9 +38,10 @@ public class App {
             ActorRef<Replicator.Command> replicator = DistributedData.get(system).replicator();
             SelfUniqueAddress node = DistributedData.get(system).selfUniqueAddress();
             ObjectMapper objectMapper = new ObjectMapper();
+            FxRateTimestampExtractor timestampExtractor = FxRateTimestampExtractor.getConfigured();
 
 
-            // Rehydrate ORMultiMap from Redis before serving any data
+            // Rehydrate LWWMap from Redis before serving any data
             RedisPublisher redisPublisher = new RedisPublisher();
             try {
                 var initialRates = redisPublisher.loadAllFxRates()
@@ -48,28 +49,33 @@ public class App {
                 for (FxRate rate : initialRates) {
                     try {
                         String currencyPair = rate.getFromCurrency() + "_" + rate.getToCurrency();
-                        String fxRateJson = objectMapper.writeValueAsString(convertFxRateToJson(rate));
+                        long timestamp = timestampExtractor.apply(rate);
 
                         replicator.tell(new Replicator.Update<>(
                                 FX_RATES_KEY,
-                                ORMultiMap.emptyWithValueDeltas(),
+                                LWWMap.empty(),
                                 Replicator.writeLocal(),
                                 null,
-                                curr -> curr.addBinding(node, currencyPair, fxRateJson)));
+                                curr -> curr.put(node, currencyPair, rate, new LWWRegister.Clock<FxRate>() {
+                                    @Override
+                                    public long apply(long currentTimestamp, FxRate value) {
+                                        return timestamp; // Use our configurable timestamp
+                                    }
+                                })));
                         
-                        log.debug("Rehydrated FX rate: {} = {}", currencyPair, fxRateJson);
+                        log.debug("Rehydrated FX rate: {} = {} (timestamp: {})", currencyPair, rate.getId(), timestamp);
                     } catch (Exception e) {
                         log.warn("Failed to seed FX rate from Redis: {}", rate.getId(), e);
                     }
                 }
-                log.info("Rehydrated {} FX rates from Redis to ORMultiMap", initialRates.size());
+                log.info("Rehydrated {} FX rates from Redis to LWWMap", initialRates.size());
             } catch (Exception e) {
-                log.error("Failed to rehydrate ORMultiMap from Redis, exiting", e);
+                log.error("Failed to rehydrate LWWMap from Redis, exiting", e);
                 system.terminate();
                 return;
             }
 
-            // Note: HTTP server would need to be updated to use ORMultiMap directly
+            // Note: HTTP server would need to be updated to use LWWMap directly
             // For now, we skip the HTTP server to focus on gRPC and stream processing
             
             // Start the gRPC server for real-time FX rate streaming
@@ -92,7 +98,7 @@ public class App {
             
             log.info("FxRate application started successfully");
             log.info("gRPC streaming endpoint available at port {}", grpcPort);
-            log.info("Using Pekko distributed data ORMultiMap for storage");
+            log.info("Using Pekko distributed data LWWMap for storage with {} timestamp extractor", timestampExtractor);
             
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                 log.info("Shutting down application");
@@ -107,14 +113,4 @@ public class App {
         }
     }
     
-    private static Object convertFxRateToJson(FxRate fxRate) {
-        return new Object() {
-            public final String id = fxRate.getId().toString();
-            public final String fromCurrency = fxRate.getFromCurrency().toString();
-            public final String toCurrency = fxRate.getToCurrency().toString();
-            public final double rate = fxRate.getRate();
-            public final long timestamp = fxRate.getTimestamp();
-            public final String source = fxRate.getSource() != null ? fxRate.getSource().toString() : null;
-        };
-    }
 }
