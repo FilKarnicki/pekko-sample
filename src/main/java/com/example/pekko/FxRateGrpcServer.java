@@ -86,6 +86,7 @@ public class FxRateGrpcServer {
             log.info("gRPC server stopped");
         }
     }
+    
 
     private class FxRateServiceImpl extends FxRateServiceGrpc.FxRateServiceImplBase {
         @Override
@@ -236,6 +237,18 @@ public class FxRateGrpcServer {
         
         public interface Command {}
         
+        public static final class TradesResponse implements Command {
+            public final LWWMap<String, TradeMessage> trades;
+            public final FxRateMessage fxRate;
+            public final String rateCurrencyPair;
+            
+            public TradesResponse(LWWMap<String, TradeMessage> trades, FxRateMessage fxRate, String rateCurrencyPair) {
+                this.trades = trades;
+                this.fxRate = fxRate;
+                this.rateCurrencyPair = rateCurrencyPair;
+            }
+        }
+        
         public static final class RegisterRiskStream implements Command {
             public final StreamObserver<FxRateWithRiskMessage> observer;
             
@@ -262,7 +275,6 @@ public class FxRateGrpcServer {
         
         private final ActorRef<Replicator.Command> replicator;
         private final Set<StreamObserver<FxRateWithRiskMessage>> activeRiskStreams = ConcurrentHashMap.newKeySet();
-        private final Map<String, TradeMessage> trades = new HashMap<>(); // Simple cache of trades
         
         public static Behavior<Command> create(ActorRef<Replicator.Command> replicator) {
             return Behaviors.setup(context -> new RiskCalculatorActor(context, replicator));
@@ -272,29 +284,6 @@ public class FxRateGrpcServer {
             super(context);
             this.replicator = replicator;
             
-            // Initialize trades cache with the 3 default trades
-            trades.put("TRADE-001", TradeMessage.newBuilder()
-                    .setTradeId("TRADE-001")
-                    .setFromCurrency("USD")
-                    .setToCurrency("EUR")
-                    .setNotional(1000000.0)
-                    .setTimestamp(System.currentTimeMillis())
-                    .build());
-            trades.put("TRADE-002", TradeMessage.newBuilder()
-                    .setTradeId("TRADE-002")
-                    .setFromCurrency("GBP")
-                    .setToCurrency("USD")
-                    .setNotional(500000.0)
-                    .setTimestamp(System.currentTimeMillis())
-                    .build());
-            trades.put("TRADE-003", TradeMessage.newBuilder()
-                    .setTradeId("TRADE-003")
-                    .setFromCurrency("USD")
-                    .setToCurrency("JPY")
-                    .setNotional(2000000.0)
-                    .setTimestamp(System.currentTimeMillis())
-                    .build());
-            
             // Subscribe to direct FX rate update events
             ActorRef<FxRateStreamProcessor.FxRateUpdated> updateAdapter = 
                     context.messageAdapter(FxRateStreamProcessor.FxRateUpdated.class, FxRateUpdateAdapter::new);
@@ -302,7 +291,7 @@ public class FxRateGrpcServer {
             context.getSystem().eventStream().tell(new org.apache.pekko.actor.typed.eventstream.EventStream.Subscribe<>(
                     FxRateStreamProcessor.FxRateUpdated.class, updateAdapter));
             
-            log.info("Subscribed to FX rate update events for risk calculation with {} trades cached", trades.size());
+            log.info("Subscribed to FX rate update events for risk calculation using distributed LWWMap for trades");
         }
         
         @Override
@@ -311,6 +300,7 @@ public class FxRateGrpcServer {
                     .onMessage(RegisterRiskStream.class, this::onRegisterRiskStream)
                     .onMessage(UnregisterRiskStream.class, this::onUnregisterRiskStream)
                     .onMessage(FxRateUpdateAdapter.class, this::onFxRateUpdate)
+                    .onMessage(TradesResponse.class, this::onTradesResponse)
                     .build();
         }
         
@@ -334,33 +324,61 @@ public class FxRateGrpcServer {
             
             String rateCurrencyPair = fxRate.getFromCurrency() + "_" + fxRate.getToCurrency();
             
+            // Query the distributed LWWMap for trades
+            @SuppressWarnings("unchecked")
+            ActorRef<Replicator.GetResponse<LWWMap<String, TradeMessage>>> responseAdapter = 
+                    (ActorRef<Replicator.GetResponse<LWWMap<String, TradeMessage>>>) getContext().messageAdapter(
+                        (Class<Replicator.GetResponse<LWWMap<String, TradeMessage>>>) (Class<?>) Replicator.GetResponse.class, 
+                        (Replicator.GetResponse<LWWMap<String, TradeMessage>> response) -> {
+                            if (response instanceof Replicator.GetSuccess) {
+                                @SuppressWarnings("unchecked")
+                                Replicator.GetSuccess<LWWMap<String, TradeMessage>> success = 
+                                        (Replicator.GetSuccess<LWWMap<String, TradeMessage>>) response;
+                                return new TradesResponse(success.dataValue(), fxRate, rateCurrencyPair);
+                            } else {
+                                log.warn("Failed to get trades from LWWMap: {}", response);
+                                return new TradesResponse(LWWMap.empty(), fxRate, rateCurrencyPair);
+                            }
+                        });
+            
+            replicator.tell(new Replicator.Get<LWWMap<String, TradeMessage>>(
+                    TRADES_KEY,
+                    Replicator.readLocal(),
+                    responseAdapter));
+            
+            return this;
+        }
+        
+        private Behavior<Command> onTradesResponse(TradesResponse response) {
             // Find trades that match this currency pair and calculate risks
             java.util.List<TradeRiskMessage> tradeRisks = new java.util.ArrayList<>();
             
-            for (TradeMessage trade : trades.values()) {
+            // Query the distributed LWWMap for trades
+            for (java.util.Map.Entry<String, TradeMessage> entry : response.trades.getEntries().entrySet()) {
+                TradeMessage trade = entry.getValue();
                 String tradeCurrencyPair = trade.getFromCurrency() + "_" + trade.getToCurrency();
                 
-                if (tradeCurrencyPair.equals(rateCurrencyPair)) {
+                if (tradeCurrencyPair.equals(response.rateCurrencyPair)) {
                     // Calculate risk = notional * rate
-                    double risk = trade.getNotional() * fxRate.getRate();
+                    double risk = trade.getNotional() * response.fxRate.getRate();
                     
                     TradeRiskMessage tradeRisk = TradeRiskMessage.newBuilder()
                             .setTrade(trade)
                             .setRisk(risk)
-                            .setRateUsed(fxRate.getRate())
+                            .setRateUsed(response.fxRate.getRate())
                             .build();
                     
                     tradeRisks.add(tradeRisk);
                     
                     log.debug("Calculated risk for trade {}: notional={} * rate={} = risk={}", 
-                             trade.getTradeId(), trade.getNotional(), fxRate.getRate(), risk);
+                             trade.getTradeId(), trade.getNotional(), response.fxRate.getRate(), risk);
                 }
             }
             
             if (!tradeRisks.isEmpty()) {
                 // Create the response message with FX rate and calculated risks
                 FxRateWithRiskMessage riskMessage = FxRateWithRiskMessage.newBuilder()
-                        .setFxRate(fxRate)
+                        .setFxRate(response.fxRate)
                         .addAllTradeRisks(tradeRisks)
                         .build();
                 
@@ -378,10 +396,10 @@ public class FxRateGrpcServer {
                 // Remove failed streams
                 activeRiskStreams.removeAll(streamsToRemove);
                 
-                log.info("Broadcasted risk calculations for {} trades to {} active streams", 
+                log.info("Broadcasted risk calculations for {} trades from LWWMap to {} active streams", 
                          tradeRisks.size(), activeRiskStreams.size());
             } else {
-                log.debug("No trades found matching currency pair {}, no risk calculations needed", rateCurrencyPair);
+                log.debug("No trades found in LWWMap matching currency pair {}, no risk calculations needed", response.rateCurrencyPair);
             }
             
             return this;
