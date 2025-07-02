@@ -1,0 +1,25 @@
+syntax = "proto3";
+package com.example.pekko.grpc;
+
+option java_multiple_files = true;
+option java_package = "com.example.pekko.grpc";
+option java_outer_classname = "FxRateProto";
+
+// Message representing a foreign exchange rate update
+message FxRateMessage {
+  string id = 1;
+  string from_currency = 2;
+  string to_currency = 3;
+  double rate = 4;
+  int64 timestamp = 5;
+  string source = 6;
+}
+
+// Empty request message for subscribing to rate updates
+message SubscribeRequest {}
+
+// Service definition for streaming FX rate updates via gRPC
+service FxRateService {
+  // Bi-directional streaming: client sends a single SubscribeRequest and receives a stream of FxRateMessage
+  rpc SubscribeRates(SubscribeRequest) returns (stream FxRateMessage);
+}

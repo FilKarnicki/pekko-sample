@@ -21,6 +21,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+@Disabled("WebSocket support removed; use gRPC client")
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 public class FxRateRealTimeNotificationTest {
     private static final Logger log = LoggerFactory.getLogger(FxRateRealTimeNotificationTest.class);

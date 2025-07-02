@@ -12,6 +12,8 @@ import java.util.concurrent.TimeUnit;
 import java.time.Duration;
 import org.apache.pekko.actor.typed.javadsl.AskPattern;
 import com.example.pekko.RedisPublisher;
+import com.example.pekko.FxRateGrpcServer;
+import com.typesafe.config.Config;
 import com.example.pekko.model.FxRate;
 
 public class App {
@@ -57,6 +59,12 @@ public class App {
             // Start the HTTP server
             httpServer.tell(new FxRateHttpServer.StartServer("localhost", 8080, null));
 
+            // Start the gRPC server for real-time FX rate streaming
+            Config grpcConfig = system.settings().config().getConfig("app.grpc-server");
+            int grpcPort = grpcConfig.getInt("port");
+            FxRateGrpcServer grpcServer = new FxRateGrpcServer(system, fxRateStorage);
+            grpcServer.start(grpcPort);
+
             // Create and start the stream processor
             FxRateStreamProcessor processor = new FxRateStreamProcessor(system, fxRateStorage, redisPublisher);
             CompletionStage<Done> streamCompletion = processor.startProcessing();
@@ -71,13 +79,14 @@ public class App {
             
             log.info("FxRate application started successfully");
             log.info("HTTP server available at: http://localhost:8080");
-            log.info("WebSocket endpoint: ws://localhost:8080/ws");
+            log.info("gRPC streaming endpoint available at port {}", grpcPort);
             log.info("REST API: http://localhost:8080/api/fxrates");
             log.info("Health check: http://localhost:8080/health");
             
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                 log.info("Shutting down application");
                 httpServer.tell(new FxRateHttpServer.StopServer());
+                grpcServer.stop();
                 redisPublisher.close();
                 system.terminate();
             }));

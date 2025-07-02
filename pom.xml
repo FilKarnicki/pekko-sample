@@ -14,6 +14,9 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <pekko.version>1.1.4</pekko.version>
     <scala.binary.version>2.13</scala.binary.version>
+    <!-- gRPC and Protobuf versions -->
+    <grpc.version>1.53.0</grpc.version>
+    <protobuf.version>3.24.0</protobuf.version>
   </properties>
 
   <dependencies>
@@ -122,6 +125,32 @@
       <artifactId>Java-WebSocket</artifactId>
       <version>1.5.6</version>
     </dependency>
+    <!-- gRPC dependencies for real-time FX rate streaming -->
+    <dependency>
+      <groupId>org.apache.pekko</groupId>
+      <artifactId>pekko-grpc-runtime_${scala.binary.version}</artifactId>
+      <version>1.1.1</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.pekko</groupId>
+      <artifactId>pekko-discovery_2.13</artifactId>
+      <version>${pekko.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.grpc</groupId>
+      <artifactId>grpc-netty-shaded</artifactId>
+      <version>${grpc.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.grpc</groupId>
+      <artifactId>grpc-protobuf</artifactId>
+      <version>${grpc.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.grpc</groupId>
+      <artifactId>grpc-stub</artifactId>
+      <version>${grpc.version}</version>
+    </dependency>
     <dependency>
       <groupId>org.apache.kafka</groupId>
       <artifactId>kafka_${scala.binary.version}</artifactId>
@@ -151,6 +180,11 @@
       <artifactId>awaitility</artifactId>
       <version>4.2.0</version>
       <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>javax.annotation</groupId>
+      <artifactId>javax.annotation-api</artifactId>
+      <version>1.3.2</version>
     </dependency>
   </dependencies>
 
@@ -182,6 +216,29 @@
             <include>**/*Tests.java</include>
           </includes>
         </configuration>
+      </plugin>
+      <!-- Plugin to generate Java sources from Protobuf and gRPC definitions -->
+      <plugin>
+        <groupId>org.xolstice.maven.plugins</groupId>
+        <artifactId>protobuf-maven-plugin</artifactId>
+        <version>0.6.1</version>
+        <configuration>
+          <pluginId>grpc-java</pluginId>
+          <protocArtifact>
+            com.google.protobuf:protoc:${protobuf.version}:exe:osx-x86_64
+          </protocArtifact>
+          <pluginArtifact>
+            io.grpc:protoc-gen-grpc-java:${grpc.version}:exe:osx-x86_64
+          </pluginArtifact>
+        </configuration>
+        <executions>
+          <execution>
+            <goals>
+              <goal>compile</goal>
+              <goal>compile-custom</goal>
+            </goals>
+          </execution>
+        </executions>
       </plugin>
       <plugin>
         <groupId>org.apache.avro</groupId>

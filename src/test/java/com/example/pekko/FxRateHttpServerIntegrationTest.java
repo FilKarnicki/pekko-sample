@@ -171,8 +171,6 @@ public class FxRateHttpServerIntegrationTest {
         
         assertEquals(200, response.getStatusCode());
         String body = response.getResponseBody();
-        assertTrue(body.contains("FxRate WebSocket Service"));
-        assertTrue(body.contains("WebSocket: /ws"));
         assertTrue(body.contains("REST API: /api/fxrates"));
         assertTrue(body.contains("Health: /health"));
     }
