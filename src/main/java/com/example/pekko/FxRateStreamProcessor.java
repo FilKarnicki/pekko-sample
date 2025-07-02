@@ -1,5 +1,6 @@
 package com.example.pekko;
 
+import com.example.pekko.grpc.FxRateMessage;
 import com.example.pekko.model.FxRate;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.confluent.kafka.serializers.KafkaAvroDeserializer;
@@ -34,9 +35,11 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.CompletionStage;
 
+import static com.example.pekko.FxRateGrpcServer.StreamSubscriberActor.convertToGrpcMessage;
+
 public class FxRateStreamProcessor extends AbstractBehavior<FxRateStreamProcessor.Command> {
     private static final Logger log = LoggerFactory.getLogger(FxRateStreamProcessor.class);
-    public static final Key<LWWMap<String, FxRate>> FX_RATES_KEY = LWWMapKey.<String, FxRate>create("fx-rates");
+    public static final Key<LWWMap<String, FxRateMessage>> FX_RATES_KEY = LWWMapKey.<String, FxRateMessage>create("fx-rates");
     
     public interface Command {}
     
@@ -129,6 +132,7 @@ public class FxRateStreamProcessor extends AbstractBehavior<FxRateStreamProcesso
     private Behavior<Command> onStoreFxRate(StoreFxRate command) {
         try {
             FxRate fxRate = command.fxRate;
+            final FxRateMessage rateMsg = convertToGrpcMessage(fxRate, "Kafka");
             String currencyPair = fxRate.getFromCurrency() + "_" + fxRate.getToCurrency();
             long timestamp = timestampExtractor.apply(fxRate);
 
@@ -137,9 +141,9 @@ public class FxRateStreamProcessor extends AbstractBehavior<FxRateStreamProcesso
                     LWWMap.empty(),
                     Replicator.writeLocal(),
                     system.ignoreRef(), // Fire and forget - no response needed
-                    curr -> curr.put(node, currencyPair, fxRate, new LWWRegister.Clock<FxRate>() {
+                    curr -> curr.put(node, currencyPair, rateMsg, new LWWRegister.Clock<FxRateMessage>() {
                         @Override
-                        public long apply(long currentTimestamp, FxRate value) {
+                        public long apply(long currentTimestamp, FxRateMessage value) {
                             return timestamp; // Use our configurable timestamp
                         }
                     })));

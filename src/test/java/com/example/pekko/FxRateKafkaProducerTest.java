@@ -43,7 +43,7 @@ public class FxRateKafkaProducerTest {
         log.info("Testing single FxRate send");
         
         // Generate a single test FxRate
-        FxRate fxRate = dataGenerator.generateSpecificFxRate("USD", "EUR", 0.8500);
+        FxRate fxRate = dataGenerator.generateSpecificFxRate("JPY", "JPY", 0.8500);
         
         // Send the FxRate
         var future = producer.sendFxRate(fxRate);

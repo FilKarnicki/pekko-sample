@@ -1,29 +1,24 @@
 package com.example.pekko;
 
-import com.example.pekko.model.FxRate2;
+import com.example.pekko.grpc.FxRateMessage;
 import org.apache.pekko.actor.typed.ActorRef;
 import org.apache.pekko.actor.typed.ActorSystem;
 import org.apache.pekko.actor.typed.javadsl.Behaviors;
-import org.apache.pekko.Done;
 import org.apache.pekko.cluster.ddata.typed.javadsl.DistributedData;
 import org.apache.pekko.cluster.ddata.typed.javadsl.Replicator;
 import org.apache.pekko.cluster.ddata.LWWMap;
-import org.apache.pekko.cluster.ddata.Key;
 import org.apache.pekko.cluster.ddata.LWWRegister;
 import org.apache.pekko.cluster.ddata.SelfUniqueAddress;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-import java.util.concurrent.CompletionStage;
 import java.util.concurrent.TimeUnit;
-import java.time.Duration;
-import org.apache.pekko.actor.typed.javadsl.AskPattern;
-import com.example.pekko.RedisPublisher;
-import com.example.pekko.FxRateGrpcServer;
+
 import com.typesafe.config.Config;
 import com.example.pekko.model.FxRate;
 
+import static com.example.pekko.FxRateGrpcServer.StreamSubscriberActor.convertToGrpcMessage;
 import static com.example.pekko.FxRateStreamProcessor.FX_RATES_KEY;
 
 public class App {
@@ -51,15 +46,15 @@ public class App {
                     try {
                         String currencyPair = rate.getFromCurrency() + "_" + rate.getToCurrency();
                         long timestamp = timestampExtractor.apply(rate);
-
+                        final FxRateMessage rateMsg = convertToGrpcMessage(rate, "Redis");
                         replicator.tell(new Replicator.Update<>(
                                 FX_RATES_KEY,
                                 LWWMap.empty(),
                                 Replicator.writeLocal(),
                                 system.ignoreRef(),
-                                curr -> curr.put(node, currencyPair, rate, new LWWRegister.Clock<FxRate>() {
+                                curr -> curr.put(node, currencyPair, rateMsg, new LWWRegister.Clock<FxRateMessage>() {
                                     @Override
-                                    public long apply(long currentTimestamp, FxRate value) {
+                                    public long apply(long currentTimestamp, FxRateMessage value) {
                                         return timestamp; // Use our configurable timestamp
                                     }
                                 })));
