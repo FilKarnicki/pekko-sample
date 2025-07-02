@@ -1,4 +1,0 @@
--------------------------------------------------------------------------------
-Test set: com.example.pekko.FxRateWebSocketIntegrationTest
--------------------------------------------------------------------------------
-Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 3.840 s -- in com.example.pekko.FxRateWebSocketIntegrationTest

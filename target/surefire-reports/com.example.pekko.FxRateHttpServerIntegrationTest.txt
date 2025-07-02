@@ -1,4 +1,0 @@
--------------------------------------------------------------------------------
-Test set: com.example.pekko.FxRateHttpServerIntegrationTest
--------------------------------------------------------------------------------
-Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.180 s -- in com.example.pekko.FxRateHttpServerIntegrationTest

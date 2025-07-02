@@ -1,4 +1,0 @@
--------------------------------------------------------------------------------
-Test set: com.example.pekko.FxRateRealTimeNotificationTest
--------------------------------------------------------------------------------
-Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.554 s -- in com.example.pekko.FxRateRealTimeNotificationTest

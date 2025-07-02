@@ -1,4 +1,0 @@
--------------------------------------------------------------------------------
-Test set: com.example.pekko.FxRateKafkaProducerTest
--------------------------------------------------------------------------------
-Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.004 s -- in com.example.pekko.FxRateKafkaProducerTest
