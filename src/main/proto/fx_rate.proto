@@ -15,6 +15,28 @@ message FxRateMessage {
   string source = 6;
 }
 
+// Message representing a trade with risk calculation
+message TradeMessage {
+  string trade_id = 1;
+  string from_currency = 2;
+  string to_currency = 3;
+  double notional = 4;
+  int64 timestamp = 5;
+}
+
+// Message containing FX rate update with calculated risks for all affected trades
+message FxRateWithRiskMessage {
+  FxRateMessage fx_rate = 1;
+  repeated TradeRiskMessage trade_risks = 2;
+}
+
+// Message representing risk calculation for a specific trade
+message TradeRiskMessage {
+  TradeMessage trade = 1;
+  double risk = 2; // notional * rate
+  double rate_used = 3;
+}
+
 // Empty request message for subscribing to rate updates
 message SubscribeRequest {}
 
@@ -22,4 +44,7 @@ message SubscribeRequest {}
 service FxRateService {
   // Bi-directional streaming: client sends a single SubscribeRequest and receives a stream of FxRateMessage
   rpc SubscribeRates(SubscribeRequest) returns (stream FxRateMessage);
+  
+  // Streaming with risk calculations: receives FX rate updates with calculated risks for all affected trades
+  rpc SubscribeRatesWithRisk(SubscribeRequest) returns (stream FxRateWithRiskMessage);
 }

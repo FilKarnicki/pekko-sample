@@ -20,6 +20,9 @@ import org.apache.pekko.cluster.ddata.LWWMap;
 import org.apache.pekko.cluster.ddata.Key;
 import com.example.pekko.grpc.FxRateMessage;
 import com.example.pekko.grpc.FxRateServiceGrpc;
+import com.example.pekko.grpc.FxRateWithRiskMessage;
+import com.example.pekko.grpc.TradeMessage;
+import com.example.pekko.grpc.TradeRiskMessage;
 import com.example.pekko.grpc.SubscribeRequest;
 import com.example.pekko.model.FxRate;
 
@@ -36,22 +39,30 @@ import org.slf4j.LoggerFactory;
 public class FxRateGrpcServer {
     private static final Logger log = LoggerFactory.getLogger(FxRateGrpcServer.class);
     private static final Key<LWWMap<String, FxRateMessage>> FX_RATES_KEY = FxRateStreamProcessor.FX_RATES_KEY;
+    private static final Key<LWWMap<String, TradeMessage>> TRADES_KEY = App.TRADES_KEY;
     
     private final ActorSystem<?> system;
     private final ActorRef<Replicator.Command> replicator;
     private final ObjectMapper objectMapper;
     private Server server;
     private ActorRef<StreamSubscriberActor.Command> subscriberActor;
+    private ActorRef<RiskCalculatorActor.Command> riskCalculatorActor;
 
     public FxRateGrpcServer(ActorSystem<?> system) {
         this.system = system;
         this.replicator = DistributedData.get(system).replicator();
         this.objectMapper = new ObjectMapper();
         
-        // Create the subscriber actor that will handle LWWMap changes
+        // Create the subscriber actor that will handle simple FX rate updates
         this.subscriberActor = system.systemActorOf(
                 StreamSubscriberActor.create(replicator),
                 "fx-rate-subscriber",
+                org.apache.pekko.actor.typed.Props.empty());
+        
+        // Create the risk calculator actor that will handle FX rate updates with risk calculations
+        this.riskCalculatorActor = system.systemActorOf(
+                RiskCalculatorActor.create(replicator),
+                "risk-calculator",
                 org.apache.pekko.actor.typed.Props.empty());
     }
 
@@ -86,6 +97,19 @@ public class FxRateGrpcServer {
             
             log.info("LWWMap-based gRPC service is ready. Use timestamp extractor: {}", 
                      FxRateTimestampExtractor.getConfigured());
+            
+            // Note: Stream is kept open - responseObserver.onCompleted() will be called
+            // when the client disconnects or an error occurs
+        }
+        
+        @Override
+        public void subscribeRatesWithRisk(SubscribeRequest request, StreamObserver<FxRateWithRiskMessage> responseObserver) {
+            log.info("gRPC client subscribed to FX rate updates WITH RISK CALCULATIONS from LWWMap and trades");
+            
+            // Register this stream observer with the risk calculator actor
+            riskCalculatorActor.tell(new RiskCalculatorActor.RegisterRiskStream(responseObserver));
+            
+            log.info("Risk calculation gRPC service is ready. Will calculate risk = notional * rate for affected trades");
             
             // Note: Stream is kept open - responseObserver.onCompleted() will be called
             // when the client disconnects or an error occurs
@@ -201,6 +225,166 @@ public class FxRateGrpcServer {
                     .setTimestamp(fxRate.getTimestamp())
                     .setSource(source)
                     .build();
+        }
+    }
+    
+    /**
+     * Actor that calculates risk for trades when FX rates change
+     */
+    public static class RiskCalculatorActor extends AbstractBehavior<RiskCalculatorActor.Command> {
+        private static final Logger log = LoggerFactory.getLogger(RiskCalculatorActor.class);
+        
+        public interface Command {}
+        
+        public static final class RegisterRiskStream implements Command {
+            public final StreamObserver<FxRateWithRiskMessage> observer;
+            
+            public RegisterRiskStream(StreamObserver<FxRateWithRiskMessage> observer) {
+                this.observer = observer;
+            }
+        }
+        
+        public static final class UnregisterRiskStream implements Command {
+            public final StreamObserver<FxRateWithRiskMessage> observer;
+            
+            public UnregisterRiskStream(StreamObserver<FxRateWithRiskMessage> observer) {
+                this.observer = observer;
+            }
+        }
+        
+        private static final class FxRateUpdateAdapter implements Command {
+            public final FxRateStreamProcessor.FxRateUpdated update;
+            
+            public FxRateUpdateAdapter(FxRateStreamProcessor.FxRateUpdated update) {
+                this.update = update;
+            }
+        }
+        
+        private final ActorRef<Replicator.Command> replicator;
+        private final Set<StreamObserver<FxRateWithRiskMessage>> activeRiskStreams = ConcurrentHashMap.newKeySet();
+        private final Map<String, TradeMessage> trades = new HashMap<>(); // Simple cache of trades
+        
+        public static Behavior<Command> create(ActorRef<Replicator.Command> replicator) {
+            return Behaviors.setup(context -> new RiskCalculatorActor(context, replicator));
+        }
+        
+        private RiskCalculatorActor(ActorContext<Command> context, ActorRef<Replicator.Command> replicator) {
+            super(context);
+            this.replicator = replicator;
+            
+            // Initialize trades cache with the 3 default trades
+            trades.put("TRADE-001", TradeMessage.newBuilder()
+                    .setTradeId("TRADE-001")
+                    .setFromCurrency("USD")
+                    .setToCurrency("EUR")
+                    .setNotional(1000000.0)
+                    .setTimestamp(System.currentTimeMillis())
+                    .build());
+            trades.put("TRADE-002", TradeMessage.newBuilder()
+                    .setTradeId("TRADE-002")
+                    .setFromCurrency("GBP")
+                    .setToCurrency("USD")
+                    .setNotional(500000.0)
+                    .setTimestamp(System.currentTimeMillis())
+                    .build());
+            trades.put("TRADE-003", TradeMessage.newBuilder()
+                    .setTradeId("TRADE-003")
+                    .setFromCurrency("USD")
+                    .setToCurrency("JPY")
+                    .setNotional(2000000.0)
+                    .setTimestamp(System.currentTimeMillis())
+                    .build());
+            
+            // Subscribe to direct FX rate update events
+            ActorRef<FxRateStreamProcessor.FxRateUpdated> updateAdapter = 
+                    context.messageAdapter(FxRateStreamProcessor.FxRateUpdated.class, FxRateUpdateAdapter::new);
+            
+            context.getSystem().eventStream().tell(new org.apache.pekko.actor.typed.eventstream.EventStream.Subscribe<>(
+                    FxRateStreamProcessor.FxRateUpdated.class, updateAdapter));
+            
+            log.info("Subscribed to FX rate update events for risk calculation with {} trades cached", trades.size());
+        }
+        
+        @Override
+        public Receive<Command> createReceive() {
+            return newReceiveBuilder()
+                    .onMessage(RegisterRiskStream.class, this::onRegisterRiskStream)
+                    .onMessage(UnregisterRiskStream.class, this::onUnregisterRiskStream)
+                    .onMessage(FxRateUpdateAdapter.class, this::onFxRateUpdate)
+                    .build();
+        }
+        
+        private Behavior<Command> onRegisterRiskStream(RegisterRiskStream command) {
+            activeRiskStreams.add(command.observer);
+            log.info("Registered new gRPC risk stream observer. Total active risk streams: {}", activeRiskStreams.size());
+            return this;
+        }
+        
+        private Behavior<Command> onUnregisterRiskStream(UnregisterRiskStream command) {
+            activeRiskStreams.remove(command.observer);
+            log.info("Unregistered gRPC risk stream observer. Total active risk streams: {}", activeRiskStreams.size());
+            return this;
+        }
+        
+        private Behavior<Command> onFxRateUpdate(FxRateUpdateAdapter adapter) {
+            FxRateStreamProcessor.FxRateUpdated update = adapter.update;
+            FxRateMessage fxRate = update.fxRateMessage;
+            
+            log.debug("Received FX rate update for risk calculation: {} = {}", update.currencyPair, fxRate.getId());
+            
+            String rateCurrencyPair = fxRate.getFromCurrency() + "_" + fxRate.getToCurrency();
+            
+            // Find trades that match this currency pair and calculate risks
+            java.util.List<TradeRiskMessage> tradeRisks = new java.util.ArrayList<>();
+            
+            for (TradeMessage trade : trades.values()) {
+                String tradeCurrencyPair = trade.getFromCurrency() + "_" + trade.getToCurrency();
+                
+                if (tradeCurrencyPair.equals(rateCurrencyPair)) {
+                    // Calculate risk = notional * rate
+                    double risk = trade.getNotional() * fxRate.getRate();
+                    
+                    TradeRiskMessage tradeRisk = TradeRiskMessage.newBuilder()
+                            .setTrade(trade)
+                            .setRisk(risk)
+                            .setRateUsed(fxRate.getRate())
+                            .build();
+                    
+                    tradeRisks.add(tradeRisk);
+                    
+                    log.debug("Calculated risk for trade {}: notional={} * rate={} = risk={}", 
+                             trade.getTradeId(), trade.getNotional(), fxRate.getRate(), risk);
+                }
+            }
+            
+            if (!tradeRisks.isEmpty()) {
+                // Create the response message with FX rate and calculated risks
+                FxRateWithRiskMessage riskMessage = FxRateWithRiskMessage.newBuilder()
+                        .setFxRate(fxRate)
+                        .addAllTradeRisks(tradeRisks)
+                        .build();
+                
+                // Broadcast to all active risk streams
+                Set<StreamObserver<FxRateWithRiskMessage>> streamsToRemove = new HashSet<>();
+                for (StreamObserver<FxRateWithRiskMessage> observer : activeRiskStreams) {
+                    try {
+                        observer.onNext(riskMessage);
+                    } catch (Exception e) {
+                        log.warn("Failed to send risk update to gRPC stream, removing observer", e);
+                        streamsToRemove.add(observer);
+                    }
+                }
+                
+                // Remove failed streams
+                activeRiskStreams.removeAll(streamsToRemove);
+                
+                log.info("Broadcasted risk calculations for {} trades to {} active streams", 
+                         tradeRisks.size(), activeRiskStreams.size());
+            } else {
+                log.debug("No trades found matching currency pair {}, no risk calculations needed", rateCurrencyPair);
+            }
+            
+            return this;
         }
     }
 }

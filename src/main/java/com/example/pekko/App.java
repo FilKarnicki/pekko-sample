@@ -1,12 +1,15 @@
 package com.example.pekko;
 
 import com.example.pekko.grpc.FxRateMessage;
+import com.example.pekko.grpc.TradeMessage;
 import org.apache.pekko.actor.typed.ActorRef;
 import org.apache.pekko.actor.typed.ActorSystem;
 import org.apache.pekko.actor.typed.javadsl.Behaviors;
 import org.apache.pekko.cluster.ddata.typed.javadsl.DistributedData;
 import org.apache.pekko.cluster.ddata.typed.javadsl.Replicator;
 import org.apache.pekko.cluster.ddata.LWWMap;
+import org.apache.pekko.cluster.ddata.LWWMapKey;
+import org.apache.pekko.cluster.ddata.Key;
 import org.apache.pekko.cluster.ddata.LWWRegister;
 import org.apache.pekko.cluster.ddata.SelfUniqueAddress;
 import org.slf4j.Logger;
@@ -23,6 +26,7 @@ import static com.example.pekko.FxRateStreamProcessor.FX_RATES_KEY;
 
 public class App {
     private static final Logger log = LoggerFactory.getLogger(App.class);
+    public static final Key<LWWMap<String, TradeMessage>> TRADES_KEY = LWWMapKey.<String, TradeMessage>create("trades");
 
     public static void main(String[] args) {
         log.info("Starting FxRate Kafka to Redis/ORMultiMap streaming application with HTTP server");
@@ -69,6 +73,48 @@ public class App {
                 log.error("Failed to rehydrate LWWMap from Redis, exiting", e);
                 system.terminate();
                 return;
+            }
+
+            // Initialize 3 trades in the TRADES_KEY LWWMap
+            TradeMessage[] trades = {
+                TradeMessage.newBuilder()
+                    .setTradeId("TRADE-001")
+                    .setFromCurrency("USD")
+                    .setToCurrency("EUR")
+                    .setNotional(1000000.0) // 1M USD
+                    .setTimestamp(System.currentTimeMillis())
+                    .build(),
+                TradeMessage.newBuilder()
+                    .setTradeId("TRADE-002")
+                    .setFromCurrency("GBP")
+                    .setToCurrency("USD")
+                    .setNotional(500000.0) // 500K GBP
+                    .setTimestamp(System.currentTimeMillis())
+                    .build(),
+                TradeMessage.newBuilder()
+                    .setTradeId("TRADE-003")
+                    .setFromCurrency("USD")
+                    .setToCurrency("JPY")
+                    .setNotional(2000000.0) // 2M USD
+                    .setTimestamp(System.currentTimeMillis())
+                    .build()
+            };
+            
+            for (TradeMessage trade : trades) {
+                String tradeKey = trade.getTradeId();
+                replicator.tell(new Replicator.Update<>(
+                        TRADES_KEY,
+                        LWWMap.empty(),
+                        Replicator.writeLocal(),
+                        system.ignoreRef(),
+                        curr -> curr.put(node, tradeKey, trade, new LWWRegister.Clock<TradeMessage>() {
+                            @Override
+                            public long apply(long currentTimestamp, TradeMessage value) {
+                                return trade.getTimestamp();
+                            }
+                        })));
+                log.info("Initialized trade: {} {} -> {} with notional {}", 
+                         trade.getTradeId(), trade.getFromCurrency(), trade.getToCurrency(), trade.getNotional());
             }
 
             // Note: HTTP server would need to be updated to use LWWMap directly
